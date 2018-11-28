@@ -1,4 +1,5 @@
 
+#include <assert.h>
 #include <dlfcn.h>
 #include <execinfo.h>
 #include <stdio.h>
@@ -17,10 +18,36 @@ static void (*dyn_notify_exit)(void) = NULL;  // TODO: it should receive params
 
 
 __attribute__((no_instrument_function))
+static void * get_funct_in_so_libr(const char * funct_name, int * error_flag)
+{
+    // We need that input argument "error_flag" be non-NULL, because the
+    // return value may be NULL, since dlsym() can normally return NULL
+    // if so is the symbol in the shared object.
+    assert(error_flag != NULL);
+
+    void (*dyn_funct)(void) = NULL;
+    char * err_msg = NULL;
+
+    dlerror();
+    dyn_funct = dlsym(shared_libr_handle, funct_name);
+    if ((err_msg = dlerror()) != NULL) {
+       fprintf(stderr, "ERROR: Finding symbol '%s': %s\n", NOTIFY_ENTRY_FUNC,
+               err_msg);
+       *error_flag = 1;
+       return NULL;
+    } else {
+       *error_flag = 0;
+       return dyn_funct;
+    }
+}
+
+
+__attribute__((no_instrument_function))
 static void load_events_library(void)
 {
-    char* error_msg;
+    int need_to_rollback = 0;    // if we need to rollback this function
     char* event_lib_name = getenv(ENV_EVENT_LIB_NAME);
+
     if (!event_lib_name) {
         fprintf(stderr, "No Events-Library specified in environment var %s.\n",
                 ENV_EVENT_LIB_NAME);
@@ -34,25 +61,20 @@ static void load_events_library(void)
         return;
     }
 
-    dlerror();
-    dyn_notify_entry = dlsym(shared_libr_handle, NOTIFY_ENTRY_FUNC);
-    if ((error_msg = dlerror()) != NULL) {
-       fprintf(stderr, "ERROR: Finding symbol '%s': %s\n", NOTIFY_ENTRY_FUNC,
-               error_msg);
-       goto error_loading_known_functions;
-    }
+    dyn_notify_entry = get_funct_in_so_libr(NOTIFY_ENTRY_FUNC,
+                                            &need_to_rollback);
+    if (need_to_rollback == 0)
+        dyn_notify_exit = get_funct_in_so_libr(NOTIFY_ENTRY_FUNC,
+                                              &need_to_rollback);
 
-    dlerror();
-    dyn_notify_exit = dlsym(shared_libr_handle, NOTIFY_EXIT_FUNC);
-    if ((error_msg = dlerror()) != NULL) {
-       fprintf(stderr, "ERROR: Finding symbol '%s': %s\n", NOTIFY_EXIT_FUNC,
-               error_msg);
-       goto error_loading_known_functions;
-    }
+    if (need_to_rollback == 0)
+        return;
 
-    return;
+    // Something failed getting the addresses of the event-receiving functions
+    // in the shared library. We need to rollback to a safe state (an alternative
+    // would be to die; error-messages were printed to stderr by
+    // "get_funct_in_so_libr()" itself when it found the error).
 
-  error_loading_known_functions:
     dyn_notify_entry = NULL;
     dyn_notify_exit = NULL;
     if (shared_libr_handle)
