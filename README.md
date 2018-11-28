@@ -21,3 +21,8 @@ or via [perf probe](http://man7.org/linux/man-pages/man1/perf-probe.1.html)
   (an example [here](https://github.com/je-nunez/Bash_library_for_Dynamic_Tracing_in_Linux_using_Perf_Events));
 SystemTap; GDB tracepoints; etc.)
 
+Another approach to instrumentation via GCC is the
+[Aspect-oriented instrumentation with GCC](https://dl.acm.org/citation.cfm?id=1939433)
+(a later version of this document is available
+[here](http://www.fsl.cs.stonybrook.edu/docs/interaspect-fmsd12/interaspect-fmsd12.pdf).)
+
