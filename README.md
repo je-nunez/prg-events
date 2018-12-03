@@ -8,8 +8,9 @@ Notify program-events using GCC instrumentation
      EVENTS_ENABLED=off ./instrumented-prg
      EVENTS_ENABLED=on  ./instrumented-prg
       
-     # TODO: sample of a "my_notification_receiver" shared-library
-     export EVENT_LIB_NAME=./my_notification_receiver.so
+     # This is the shared-library that received the trace notification events
+     export EVENT_LIB_NAME=./event_listener.so
+     # Run the program now:
      EVENTS_ENABLED=on  ./instrumented-prg
 
 # Note:
