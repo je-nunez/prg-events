@@ -2,11 +2,13 @@
 #include <assert.h>
 #include <dlfcn.h>
 #include <execinfo.h>
+#include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <strings.h>
+#include <string.h>
 #include <unistd.h>
 #include <sys/socket.h>
+#include <sys/un.h>
 
 
 #include "instrument.h"
@@ -89,6 +91,19 @@ static void load_events_library(void) {
 
 
 __attribute__((no_instrument_function))
+static int get_temporary_fname(char * in_out_template) {
+    int temp_f = -1;
+    if ((temp_f = mkstemp(in_out_template)) == -1) {
+        perror("mkstemp: ");
+        return -1;    // error
+    }
+    close(temp_f);
+    unlink(in_out_template);
+    return 0;
+}
+
+
+__attribute__((no_instrument_function))
 static void load_ipc_unix_socket(void) {
     char* unix_socket_path = getenv(ENV_EVENT_UNIX_SOCKET);
     if (!unix_socket_path) {
@@ -96,12 +111,65 @@ static void load_ipc_unix_socket(void) {
         return;
     }
 
+    char socket_client_fname[SIZEOF_SOCKADDR_UN_SUN_PATH+1];
+    struct sockaddr_un client_addr;
+    memset(&client_addr, 0, sizeof(client_addr));
+    client_addr.sun_family = AF_UNIX;
+
+    strncpy(socket_client_fname, TEMPLATE_FNAME_SOCKADDR,
+            SIZEOF_SOCKADDR_UN_SUN_PATH);
+    if (get_temporary_fname(socket_client_fname) == -1) {
+        unix_sockets_fd = -1;
+        return;
+    }
+
+    strncpy(client_addr.sun_path, socket_client_fname, SIZEOF_SOCKADDR_UN_SUN_PATH);
+
     if ((unix_sockets_fd = socket(AF_UNIX, SOCK_DGRAM, 0)) == -1 ) {
-        perror("Unix-Socket error");
+        perror("Unix-Socket error: socket() ");
+        return;
+    }
+
+    if (bind(unix_sockets_fd, (struct sockaddr *) &client_addr,
+             sizeof(client_addr)) == -1) {
+        perror("Unix-Socket error: bind() ");
+        close(unix_sockets_fd);
+        unix_sockets_fd = -1;
+        return;
+    }
+
+    // connect to the IPC server (which will receive our notifications)
+    struct sockaddr_un server_addr;
+    memset(&server_addr, 0, sizeof(server_addr));
+    server_addr.sun_family = AF_UNIX;
+    strncpy(server_addr.sun_path, unix_socket_path,
+            SIZEOF_SOCKADDR_UN_SUN_PATH);
+
+    if (connect(unix_sockets_fd, (struct sockaddr *) &server_addr,
+                sizeof(server_addr)) == -1) {
+        perror("Unix-Socket error: connect() ");
+        close(unix_sockets_fd);
+        unix_sockets_fd = -1;
+        return;
+    }
+
+    // We need that sending the IPC messages to the server be non-blocking
+    int so_flags;
+    if ((so_flags = fcntl(unix_sockets_fd, F_GETFL)) == -1) {
+        perror("Unix-Socket error: fcntl(F_GETFL)");
+        close(unix_sockets_fd);
+        unix_sockets_fd = -1;
+        return;
+    }
+    if (fcntl(unix_sockets_fd, F_SETFL, so_flags | FNDELAY | FASYNC) == -1) {
+        perror("Unix-Socket error: fcntl(F_SETFL)");
+        close(unix_sockets_fd);
+        unix_sockets_fd = -1;
         return;
     }
 
     // TODO: Remaining of this code
+
 }
 
 
