@@ -94,7 +94,7 @@ __attribute__((no_instrument_function))
 static int get_temporary_fname(char * in_out_template) {
     int temp_f = -1;
     if ((temp_f = mkstemp(in_out_template)) == -1) {
-        perror("mkstemp: ");
+        perror("mkstemp");
         return -1;    // error
     }
     close(temp_f);
@@ -126,13 +126,13 @@ static void load_ipc_unix_socket(void) {
     strncpy(client_addr.sun_path, socket_client_fname, SIZEOF_SOCKADDR_UN_SUN_PATH);
 
     if ((unix_sockets_fd = socket(AF_UNIX, SOCK_DGRAM, 0)) == -1 ) {
-        perror("Unix-Socket error: socket() ");
+        perror("Unix-Socket error: socket()");
         return;
     }
 
     if (bind(unix_sockets_fd, (struct sockaddr *) &client_addr,
              sizeof(client_addr)) == -1) {
-        perror("Unix-Socket error: bind() ");
+        perror("Unix-Socket error: bind()");
         close(unix_sockets_fd);
         unix_sockets_fd = -1;
         return;
@@ -147,7 +147,7 @@ static void load_ipc_unix_socket(void) {
 
     if (connect(unix_sockets_fd, (struct sockaddr *) &server_addr,
                 sizeof(server_addr)) == -1) {
-        perror("Unix-Socket error: connect() ");
+        perror("Unix-Socket error: connect()");
         close(unix_sockets_fd);
         unix_sockets_fd = -1;
         return;
@@ -168,8 +168,8 @@ static void load_ipc_unix_socket(void) {
         return;
     }
 
-    // TODO: Remaining of this code
-
+    // LAST:
+    notif_thru_unix_sockets = 1;
 }
 
 
@@ -208,8 +208,25 @@ void instrument_destructor(void) {
     fprintf(stderr, "In Event Final Destructor.\n");
     if (shared_libr_handle)
         dlclose(shared_libr_handle);
+    if (notif_thru_unix_sockets && unix_sockets_fd != -1)
+        close(unix_sockets_fd);
 }
 
+__attribute__((no_instrument_function))
+int socket_send(const void *buffer, size_t length, int flags) {
+    ssize_t sent;
+
+    sent = send(unix_sockets_fd, buffer, length, flags);
+    if (sent == -1) {
+        perror("Unix-Socket error: send()");
+        return 0;
+    } else if (sent != length) {
+        fprintf(stderr, "Unix-Socket error: send(): couldn't send all buffer:"
+                "size: %ld sent: %ld", length, sent);
+        return 0;
+    } else
+        return 1;
+}
 
 __attribute__((no_instrument_function))
 static void ipc_send_notification_entry(void *entered_func, void *call_site,
@@ -217,7 +234,44 @@ static void ipc_send_notification_entry(void *entered_func, void *call_site,
     if (notif_thru_unix_sockets == 0 ||
             unix_sockets_fd == -1)
         return;
-    // TODO: send the function-call entry notification
+
+    // TODO: below there are several "snprintf(buffer,...)", each followed by
+    //       its respective "socket_send(buffer,...)", whose line-oriented
+    //       functionality matches the demo IPC receiver given to accept these
+    //       messages, using "socat ... STDOUT". But a more proper way for
+    //       this "ipc_send_notification_entry(params)" function to notify its
+    //       params is to codify its "params" as a [possibly binary] structure,
+    //       (or JSON string), and then send this structure with a single call
+    //       to "socket_send(codified_structure,...)". This, as well, will
+    //       increase the speed performance of this IPC trace-notification.
+    int result;
+    char buffer[SOCKET_BUFFER_SIZE];
+
+    result = snprintf(buffer, sizeof buffer,
+                      "Function ENTRY %p from %p [stack frames sampled %d]\n",
+                      entered_func, call_site, frames_stack);
+    if (result >= sizeof buffer)
+        fprintf(stderr,
+                "WARN: at %s:%d: buffer truncated [max %ld: req %d]\n",
+                __func__, __LINE__, sizeof buffer, result);
+
+    result = socket_send(buffer, result, MSG_NOSIGNAL);
+    if (! result)
+        return;
+
+    for (int i=0; i<frames_stack; i++) {
+        result = snprintf(buffer, sizeof buffer,
+                          "  Stack frame %d: %s\n", i, stack_locs[i]);
+
+        if (result >= sizeof buffer)
+            fprintf(stderr,
+                    "WARN: at %s:%d: buffer truncated [max %ld: req %d]\n",
+                    __func__, __LINE__, sizeof buffer, result);
+
+        result = socket_send(buffer, result, MSG_NOSIGNAL);
+        if (! result)
+            return;
+    }
 }
 
 
@@ -226,7 +280,27 @@ static void ipc_send_notification_exit(void *exited_func, void *call_site) {
     if (notif_thru_unix_sockets == 0 ||
             unix_sockets_fd == -1)
         return;
-    // TODO: send the function-call exit notification
+
+    // TODO: below there are several "snprintf(buffer,...)", each followed by
+    //       its respective "socket_send(buffer,...)", whose line-oriented
+    //       functionality matches the demo IPC receiver given to accept these
+    //       messages, using "socat ... STDOUT". But a more proper way for
+    //       this "ipc_send_notification_exit(params)" function to notify its
+    //       params is to codify its "params" as a [possibly binary] structure,
+    //       (or JSON string), and then send this structure with a single call
+    //       to "socket_send(codified_structure,...)". This, as well, will
+    //       increase the speed performance of this IPC trace-notification.
+    int result;
+    char buffer[SOCKET_BUFFER_SIZE];
+
+    result = snprintf(buffer, sizeof buffer, "Function EXIT %p to %p\n",
+                      exited_func, call_site);
+    if (result >= sizeof buffer)
+        fprintf(stderr,
+                "WARN: at %s:%d: buffer truncated [max %ld: req %d]\n",
+                __func__, __LINE__, sizeof buffer, result);
+
+    socket_send(buffer, result, MSG_NOSIGNAL);
 }
 
 
@@ -248,7 +322,8 @@ void __cyg_profile_func_enter(void *func, void *call_site) {
         (*dyn_notify_entry)(func, call_site, n-1, function_locs+1);
 
     // Send IPC notification through the Unix socket, if requested
-    ipc_send_notification_entry(func, call_site, n-1, function_locs+1);
+    if (notif_thru_unix_sockets && unix_sockets_fd != -1)
+        ipc_send_notification_entry(func, call_site, n-1, function_locs+1);
 
     if (function_locs)
         free(function_locs);

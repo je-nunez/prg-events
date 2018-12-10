@@ -12,6 +12,15 @@ Notify program-events using GCC instrumentation
      export EVENT_LIB_NAME=./event_listener.so
      # Run the program now:
      EVENTS_ENABLED=on  ./instrumented-prg
+      
+     # To receive through IPC (Unix sockets, datagrams) the trace notification
+     # events:
+     # In one terminal, run the demo IPC server (needs "socat" installed, and
+     # opens a Unix socket at "/tmp/ipc_receiver_socket"):
+     sh ipc_receiver_demo.sh
+     # In another terminal:
+     export EVENT_UNIX_SOCKET=/tmp/ipc_receiver_socket
+     EVENTS_ENABLED=on  ./instrumented-prg
 
 # Note:
 
