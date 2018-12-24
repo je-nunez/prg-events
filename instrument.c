@@ -244,34 +244,48 @@ static void ipc_send_notification_entry(void *entered_func, void *call_site,
     //       (or JSON string), and then send this structure with a single call
     //       to "socket_send(codified_structure,...)". This, as well, will
     //       increase the speed performance of this IPC trace-notification.
-    int result;
-    char buffer[SOCKET_BUFFER_SIZE];
+    char field_buffer[SOCKET_FIELD_BUFFER_MAX_SIZE],
+         msg_buffer[SOCKET_ENTIRE_MSG_MAX_SIZE];
+    int field_len, available_in_msg_buf;
 
-    result = snprintf(buffer, sizeof buffer,
-                      "Function ENTRY %p from %p [stack frames sampled %d]\n",
-                      entered_func, call_site, frames_stack);
-    if (result >= sizeof buffer)
+    // assert(SOCKET_FIELD_BUFFER_MAX_SIZE < SOCKET_ENTIRE_MSG_MAX_SIZE);
+    assert(sizeof field_buffer < sizeof msg_buffer);
+
+    field_len = snprintf(field_buffer, sizeof field_buffer,
+                         "Function ENTRY %p from %p [stack frames sampled %d]\n",
+                         entered_func, call_site, frames_stack);
+    if (field_len >= sizeof field_buffer)
         fprintf(stderr,
-                "WARN: at %s:%d: buffer truncated [max %ld: req %d]\n",
-                __func__, __LINE__, sizeof buffer, result);
+                "WARN: at %s:%d: field buffer truncated [max %ld: req %d]\n",
+                __func__, __LINE__, sizeof field_buffer, field_len);
 
-    result = socket_send(buffer, result, MSG_NOSIGNAL);
-    if (! result)
-        return;
+    strcpy(msg_buffer, field_buffer);
+    available_in_msg_buf = sizeof msg_buffer - 1 - strlen(msg_buffer);
 
     for (int i=0; i<frames_stack; i++) {
-        result = snprintf(buffer, sizeof buffer,
-                          "  Stack frame %d: %s\n", i, stack_locs[i]);
+        field_len = snprintf(field_buffer, sizeof field_buffer,
+                             "  Stack frame %d: %s\n", i, stack_locs[i]);
 
-        if (result >= sizeof buffer)
+        if (field_len >= sizeof field_buffer)
             fprintf(stderr,
-                    "WARN: at %s:%d: buffer truncated [max %ld: req %d]\n",
-                    __func__, __LINE__, sizeof buffer, result);
+                    "WARN: at %s:%d: field bufr truncated [max %ld: req %d]\n",
+                    __func__, __LINE__, sizeof field_buffer, field_len);
 
-        result = socket_send(buffer, result, MSG_NOSIGNAL);
-        if (! result)
-            return;
+        strncat(msg_buffer, field_buffer, available_in_msg_buf);
+        if (field_len < available_in_msg_buf) {
+            // We were able to copy all the field into the message buffer
+            available_in_msg_buf -= field_len;
+        } else {
+            // We couldn't copy all the field into the message buffer
+            fprintf(stderr,
+                    "WARN: at %s:%d: messg bufr truncated [max %ld: req %d]\n",
+                    __func__, __LINE__, sizeof field_buffer, field_len);
+            break;   // break this for-loop, since the msg-buf is full
+        }
     }
+
+    // send IPC message at the end
+    socket_send(msg_buffer, strlen(msg_buffer), MSG_NOSIGNAL);
 }
 
 
@@ -291,16 +305,17 @@ static void ipc_send_notification_exit(void *exited_func, void *call_site) {
     //       to "socket_send(codified_structure,...)". This, as well, will
     //       increase the speed performance of this IPC trace-notification.
     int result;
-    char buffer[SOCKET_BUFFER_SIZE];
+    char msg_buffer[SOCKET_ENTIRE_MSG_MAX_SIZE];
 
-    result = snprintf(buffer, sizeof buffer, "Function EXIT %p to %p\n",
+    result = snprintf(msg_buffer, sizeof msg_buffer,
+                      "Function EXIT %p to %p\n",
                       exited_func, call_site);
-    if (result >= sizeof buffer)
+    if (result >= sizeof msg_buffer)
         fprintf(stderr,
                 "WARN: at %s:%d: buffer truncated [max %ld: req %d]\n",
-                __func__, __LINE__, sizeof buffer, result);
+                __func__, __LINE__, sizeof msg_buffer, result);
 
-    socket_send(buffer, result, MSG_NOSIGNAL);
+    socket_send(msg_buffer, result, MSG_NOSIGNAL);
 }
 
 

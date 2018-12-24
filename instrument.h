@@ -1,4 +1,8 @@
 
+#ifndef _INSTRUMENT_H
+#define _INSTRUMENT_H   1
+
+
 #define ENV_EVENTS_ENABLED   "EVENTS_ENABLED"
 
 #define ENV_EVENT_LIB_NAME  "EVENT_LIB_NAME"
@@ -13,6 +17,8 @@
 // "struct sockaddr_un" in Linux: "man 7 unix".)
 #define SIZEOF_SOCKADDR_UN_SUN_PATH  108
 #define TEMPLATE_FNAME_SOCKADDR      "/tmp/trace_socket_XXXXXX"
+#define SOCKET_FIELD_BUFFER_MAX_SIZE  1024
+#define SOCKET_ENTIRE_MSG_MAX_SIZE    ( 16 * SOCKET_FIELD_BUFFER_MAX_SIZE )
 
 #define MAX_RETURN_ADDRESSES_IN_STACK 30
 
@@ -36,4 +42,6 @@ __attribute__((no_instrument_function));
 
 void __cyg_profile_func_exit (void *func, void *call_site)
 __attribute__((no_instrument_function));
+
+#endif
 
