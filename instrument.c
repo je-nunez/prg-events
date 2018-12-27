@@ -321,24 +321,41 @@ static void ipc_send_notification_exit(void *exited_func, void *call_site) {
 
 void __cyg_profile_func_enter(void *func, void *call_site) {
     if (!events_enabled)
-        return;
+        return;  // nothing to do
 
     void * return_addresses[MAX_RETURN_ADDRESSES_IN_STACK];
-
-    fprintf(stderr, "Function entry: %p %p\n   Stack:\n", func, call_site);
+    int has_been_notified_to_plugins = 0;
 
     int n = backtrace(return_addresses, MAX_RETURN_ADDRESSES_IN_STACK);
     char ** function_locs = backtrace_symbols(return_addresses, n);
 
-    // Try to send notifications. First, by SO object, if set
-    if (dyn_notify_entry)
+    // Try to send notifications. First, by SO object, if set, because it
+    // is faster (although more insecure because an SO object can crash)
+    if (dyn_notify_entry) {
         // The -1 and +1 is to ignore the frame at the top of the stack:
         // this function
         (*dyn_notify_entry)(func, call_site, n-1, function_locs+1);
+        has_been_notified_to_plugins = 1;
+    }
 
-    // Send IPC notification through the Unix socket, if requested
-    if (notif_thru_unix_sockets && unix_sockets_fd != -1)
+    // Next send IPC notification through the Unix socket, if requested,
+    // because it is a slower notification (although safer because a crash
+    // in the remote IPC receiver should not affect this application)
+    if (notif_thru_unix_sockets && unix_sockets_fd != -1) {
         ipc_send_notification_entry(func, call_site, n-1, function_locs+1);
+        has_been_notified_to_plugins = 1;
+    }
+
+    if (! has_been_notified_to_plugins) {
+        // a default notification (TODO: join all these fprintf(stderr) below
+        // in a single fprint(stderr) call)
+        fprintf(stderr, "Function entry: %p %p\n", func, call_site);
+        if (function_locs) {
+            fprintf(stderr, "   Stack:\n");
+            for (int i=0; i<n; i++)
+                fprintf(stderr, "      %s\n", function_locs[i]);
+        }
+    }
 
     if (function_locs)
         free(function_locs);
@@ -347,13 +364,27 @@ void __cyg_profile_func_enter(void *func, void *call_site) {
 
 void __cyg_profile_func_exit(void *func, void *call_site) {
     if (!events_enabled)
-        return;
+        return;  // nothing to do
+
+    int has_been_notified_to_plugins = 0;
+
+    // We could call here as well the code to find the stack-frames backtraces
+    // as it was done in __cyg_profile_func_enter() above.
 
     // Try to send notifications. First, by SO object, if set
-    if (dyn_notify_exit)
+    if (dyn_notify_exit) {
         (*dyn_notify_exit)(func, call_site);
+        has_been_notified_to_plugins = 1;
+    }
 
     // Send IPC notification through the Unix socket, if requested
-    ipc_send_notification_exit(func, call_site);
+    if (notif_thru_unix_sockets && unix_sockets_fd != -1) {
+        ipc_send_notification_exit(func, call_site);
+        has_been_notified_to_plugins = 1;
+    }
+
+    if (! has_been_notified_to_plugins)
+        // a default notification
+        fprintf(stderr, "Function exit: %p %p\n", func, call_site);
 }
 
