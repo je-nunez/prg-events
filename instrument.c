@@ -21,6 +21,8 @@ static TExitNotificationSubr  dyn_notify_exit  = NULL;
 
 static int notif_thru_unix_sockets = 0;
 static int unix_sockets_fd = -1;
+static char socket_client_fname[SIZEOF_SOCKADDR_UN_SUN_PATH+1];
+
 
 
 __attribute__((no_instrument_function))
@@ -102,6 +104,12 @@ static int get_temporary_fname(char * in_out_template) {
     return 0;
 }
 
+__attribute__((no_instrument_function))
+static void close_datagram_unix_socket(int unix_socket, const char* socket_path) {
+    close(unix_socket);
+    // remove the entry in the filespace
+    unlink(socket_path);
+}
 
 __attribute__((no_instrument_function))
 static void load_ipc_unix_socket(void) {
@@ -111,7 +119,6 @@ static void load_ipc_unix_socket(void) {
         return;
     }
 
-    char socket_client_fname[SIZEOF_SOCKADDR_UN_SUN_PATH+1];
     struct sockaddr_un client_addr;
     memset(&client_addr, 0, sizeof(client_addr));
     client_addr.sun_family = AF_UNIX;
@@ -133,7 +140,7 @@ static void load_ipc_unix_socket(void) {
     if (bind(unix_sockets_fd, (struct sockaddr *) &client_addr,
              sizeof(client_addr)) == -1) {
         perror("Unix-Socket error: bind()");
-        close(unix_sockets_fd);
+        close_datagram_unix_socket(unix_sockets_fd, socket_client_fname);
         unix_sockets_fd = -1;
         return;
     }
@@ -148,7 +155,7 @@ static void load_ipc_unix_socket(void) {
     if (connect(unix_sockets_fd, (struct sockaddr *) &server_addr,
                 sizeof(server_addr)) == -1) {
         perror("Unix-Socket error: connect()");
-        close(unix_sockets_fd);
+        close_datagram_unix_socket(unix_sockets_fd, socket_client_fname);
         unix_sockets_fd = -1;
         return;
     }
@@ -157,13 +164,13 @@ static void load_ipc_unix_socket(void) {
     int so_flags;
     if ((so_flags = fcntl(unix_sockets_fd, F_GETFL)) == -1) {
         perror("Unix-Socket error: fcntl(F_GETFL)");
-        close(unix_sockets_fd);
+        close_datagram_unix_socket(unix_sockets_fd, socket_client_fname);
         unix_sockets_fd = -1;
         return;
     }
     if (fcntl(unix_sockets_fd, F_SETFL, so_flags | FNDELAY | FASYNC) == -1) {
         perror("Unix-Socket error: fcntl(F_SETFL)");
-        close(unix_sockets_fd);
+        close_datagram_unix_socket(unix_sockets_fd, socket_client_fname);
         unix_sockets_fd = -1;
         return;
     }
@@ -209,7 +216,7 @@ void instrument_destructor(void) {
     if (shared_libr_handle)
         dlclose(shared_libr_handle);
     if (notif_thru_unix_sockets && unix_sockets_fd != -1)
-        close(unix_sockets_fd);
+        close_datagram_unix_socket(unix_sockets_fd, socket_client_fname);
 }
 
 __attribute__((no_instrument_function))
