@@ -20,6 +20,10 @@
 #define SOCKET_FIELD_BUFFER_MAX_SIZE  1024
 #define SOCKET_ENTIRE_MSG_MAX_SIZE    ( 16 * SOCKET_FIELD_BUFFER_MAX_SIZE )
 
+// Accept remote trace/debugging commands (requires the IPC through the
+// Unix-domain sockets)
+#define ACCEPT_REMOTE_COMMANDS   0
+
 #define MAX_RETURN_ADDRESSES_IN_STACK 30
 
 typedef void (*TEntryNotificationSubr)(void *entered_func, void *call_site,

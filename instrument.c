@@ -15,6 +15,7 @@
 
 
 static int events_enabled = 0;
+
 static void * shared_libr_handle = NULL;
 static TEntryNotificationSubr dyn_notify_entry = NULL;
 static TExitNotificationSubr  dyn_notify_exit  = NULL;
@@ -22,7 +23,9 @@ static TExitNotificationSubr  dyn_notify_exit  = NULL;
 static int notif_thru_unix_sockets = 0;
 static int unix_sockets_fd = -1;
 static char socket_client_fname[SIZEOF_SOCKADDR_UN_SUN_PATH+1];
-
+// Accept remote trace/debugging commands (requires the IPC through the
+// Unix-domain sockets):
+static int accept_remote_commands = ACCEPT_REMOTE_COMMANDS;
 
 
 __attribute__((no_instrument_function))
@@ -173,6 +176,21 @@ static void load_ipc_unix_socket(void) {
         close_datagram_unix_socket(unix_sockets_fd, socket_client_fname);
         unix_sockets_fd = -1;
         return;
+    }
+
+    /* We don't need to read from the IPC Unix-domain socket.
+     * Note: We would need to read from it if we accepted, e.g., some
+     * tracing-debugging commands for this running program, like
+     * argument locations in the stack for some functions in this programs,
+     * or global data locations, whose values could be written as well
+     * together with the notification sent through this Unix socket. */
+    if (accept_remote_commands == 0) {
+        if (shutdown(unix_sockets_fd, SHUT_RD) == -1) {
+            perror("Unix-Socket error: shutdown(SHUT_RD)");
+            close_datagram_unix_socket(unix_sockets_fd, socket_client_fname);
+            unix_sockets_fd = -1;
+            return;
+        }
     }
 
     // LAST:
@@ -326,6 +344,18 @@ static void ipc_send_notification_exit(void *exited_func, void *call_site) {
 }
 
 
+__attribute__((no_instrument_function))
+void read_remote_trace_sampling_commands(int ipc_socket) {
+    // TODO: read remote trace/sampling commands through the
+    // IPC Unix-domain socket.
+    // Probably this logic of "read_remote_trace_sampling_commands"
+    // should be in practice running in a separate thread, for otherwise,
+    // a long running function (without calls to other functions in the
+    // program -not including library functions) may delay the reading
+    // of remote trace commands.
+}
+
+
 void __cyg_profile_func_enter(void *func, void *call_site) {
     if (!events_enabled)
         return;  // nothing to do
@@ -349,6 +379,12 @@ void __cyg_profile_func_enter(void *func, void *call_site) {
     // because it is a slower notification (although safer because a crash
     // in the remote IPC receiver should not affect this application)
     if (notif_thru_unix_sockets && unix_sockets_fd != -1) {
+        // See if we accept remote commands (that would be through the
+        // IPC Unix socket)
+        if (accept_remote_commands)
+            read_remote_trace_sampling_commands(unix_sockets_fd);
+
+        // notify this event through the IPC Unix socket:
         ipc_send_notification_entry(func, call_site, n-1, function_locs+1);
         has_been_notified_to_plugins = 1;
     }
@@ -386,6 +422,12 @@ void __cyg_profile_func_exit(void *func, void *call_site) {
 
     // Send IPC notification through the Unix socket, if requested
     if (notif_thru_unix_sockets && unix_sockets_fd != -1) {
+        // See if we accept remote commands (that would be through the
+        // IPC Unix socket)
+        if (accept_remote_commands)
+            read_remote_trace_sampling_commands(unix_sockets_fd);
+
+        // notify this event through the IPC Unix socket:
         ipc_send_notification_exit(func, call_site);
         has_been_notified_to_plugins = 1;
     }
